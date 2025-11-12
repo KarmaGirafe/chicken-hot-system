@@ -68,6 +68,12 @@ function updateStatus(connected) {
 }
 
 function afficherCommande(commande, isNew = false) {
+    // ✅ Vérifie si la commande existe déjà dans le DOM
+    if (document.getElementById(`commande-${commande.id}`)) {
+        console.log('⚠️ Commande déjà affichée:', commande.id);
+        return;
+    }
+    
     commandesActives.set(commande.id, commande);
     updateCommandesCount();
     
@@ -102,6 +108,8 @@ function afficherCommande(commande, isNew = false) {
     
     grid.appendChild(card);
     
+    console.log('✅ Commande affichée:', commande.numero);
+    
     // Retire le badge "nouvelle" après 5 secondes
     if (isNew) {
         setTimeout(() => {
@@ -120,6 +128,7 @@ function retirerCommande(commandeId) {
     if (card) {
         card.style.animation = 'slideOut 0.3s ease-out';
         setTimeout(() => card.remove(), 300);
+        console.log('✅ Commande retirée:', commandeId);
     }
     
     // Si plus de commandes, affiche l'état vide

@@ -6,8 +6,6 @@ from openai import OpenAI
 import json
 import os
 
-client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-
 # Menu pour le contexte de l'IA
 MENU_CONTEXT = """
 === MENU CHICKEN HOT DREUX ===
@@ -76,6 +74,18 @@ def analyser_commande_avec_openai(transcript):
     Returns:
         dict: Analyse de la commande
     """
+    
+    # Initialise le client OpenAI ICI (pas au niveau du module)
+    try:
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            print("⚠️ OPENAI_API_KEY manquant - utilisation du fallback")
+            return analyser_commande_simple(transcript)
+        
+        client = OpenAI(api_key=api_key)
+    except Exception as e:
+        print(f"❌ Erreur initialisation OpenAI: {e}")
+        return analyser_commande_simple(transcript)
     
     prompt = f"""Tu es un système d'analyse de commandes pour le restaurant Chicken Hot Dreux.
 

@@ -8,6 +8,27 @@ from order_analyzer import analyser_commande
 
 app = Flask(__name__, static_folder='static')
 
+# Cache pour éviter les duplicatas
+call_cache = {}
+CACHE_EXPIRY = 300  # 5 minutes
+
+def is_duplicate_call(call_id, timestamp):
+    """Vérifie si l'appel a déjà été traité"""
+    now = datetime.now().timestamp()
+    
+    # Nettoie le cache des vieux appels
+    expired = [cid for cid, ts in call_cache.items() if now - ts > CACHE_EXPIRY]
+    for cid in expired:
+        del call_cache[cid]
+    
+    # Vérifie si déjà traité
+    if call_id in call_cache:
+        print(f"⚠️ Appel {call_id} déjà traité - Ignoré")
+        return True
+    
+    call_cache[call_id] = timestamp
+    return False
+
 # Initialise Firebase
 firebase_key = os.environ.get('FIREBASE_KEY')
 if firebase_key:
@@ -48,6 +69,10 @@ def webhook_retell():
         start_time = call.get('start_timestamp')
         call_id = call.get('call_id')
         duration = call.get('duration_ms', 0) // 1000
+        
+        # ✅ VÉRIFIE SI DÉJÀ TRAITÉ
+        if is_duplicate_call(call_id, start_time):
+            return jsonify({'status': 'duplicate', 'message': 'Call already processed'}), 200
         
         date_obj = datetime.fromtimestamp(start_time / 1000)
         date_str = date_obj.strftime('%d/%m/%Y')

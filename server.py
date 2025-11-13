@@ -1,146 +1,210 @@
 from flask import Flask, request, jsonify, send_from_directory
-from datetime import datetime
+from order_analyzer import OrderAnalyzer
 import firebase_admin
 from firebase_admin import credentials, db
 import os
 import json
-from order_analyzer import analyser_commande
+from datetime import datetime
+import requests
+from geopy.distance import geodesic
 
 app = Flask(__name__, static_folder='static')
 
-# Cache pour éviter les duplicatas
-call_cache = {}
-CACHE_EXPIRY = 300  # 5 minutes
+# Configuration
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+FIREBASE_URL = os.environ.get('FIREBASE_URL')
 
-def is_duplicate_call(call_id, timestamp):
-    """Vérifie si l'appel a déjà été traité"""
-    now = datetime.now().timestamp()
-    
-    # Nettoie le cache des vieux appels
-    expired = [cid for cid, ts in call_cache.items() if now - ts > CACHE_EXPIRY]
-    for cid in expired:
-        del call_cache[cid]
-    
-    # Vérifie si déjà traité
-    if call_id in call_cache:
-        print(f"⚠️ Appel {call_id} déjà traité - Ignoré")
-        return True
-    
-    call_cache[call_id] = timestamp
-    return False
+# Coordonnées du restaurant Chicken Hot Dreux
+RESTAURANT_COORDS = (48.7333, 1.3667)  # Dreux, France
 
-# Initialise Firebase
+# Initialiser Firebase
 firebase_key = os.environ.get('FIREBASE_KEY')
 if firebase_key:
-    cred_dict = json.loads(firebase_key)
+    # Si la clé est une chaîne JSON
+    if isinstance(firebase_key, str):
+        cred_dict = json.loads(firebase_key)
+    else:
+        cred_dict = firebase_key
     cred = credentials.Certificate(cred_dict)
 else:
+    # Sinon utiliser le fichier
     cred = credentials.Certificate('firebase-key.json')
 
 firebase_admin.initialize_app(cred, {
-    'databaseURL': os.environ.get('FIREBASE_URL', 'https://TON-PROJET.firebaseio.com')
+    'databaseURL': FIREBASE_URL
 })
+
+# Initialiser l'analyseur de commandes
+analyzer = OrderAnalyzer(OPENAI_API_KEY)
+
+def verify_address(address):
+    """Vérifie l'adresse avec Nominatim et retourne les coordonnées"""
+    try:
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            'q': address,
+            'format': 'json',
+            'limit': 1,
+            'countrycodes': 'fr'
+        }
+        headers = {
+            'User-Agent': 'ChickenHotDreux/1.0'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=5)
+        data = response.json()
+        
+        if data and len(data) > 0:
+            lat = float(data[0]['lat'])
+            lon = float(data[0]['lon'])
+            display_name = data[0]['display_name']
+            return {
+                'valid': True,
+                'coordinates': (lat, lon),
+                'formatted_address': display_name
+            }
+        else:
+            return {'valid': False, 'error': 'Adresse introuvable'}
+    except Exception as e:
+        print(f"Erreur vérification adresse: {e}")
+        return {'valid': False, 'error': str(e)}
+
+def calculate_distance(coords1, coords2):
+    """Calcule la distance en km entre deux coordonnées"""
+    return round(geodesic(coords1, coords2).km, 2)
+
+def calculate_delivery_fee(distance_km, order_total):
+    """Calcule les frais de livraison - GRATUIT si commande > 20€"""
+    if order_total > 20:
+        return 0.00
+    
+    # Sinon, frais basés sur la distance
+    if distance_km <= 3:
+        return 2.00
+    elif distance_km <= 5:
+        return 3.00
+    elif distance_km <= 8:
+        return 4.00
+    else:
+        return 5.00
 
 @app.route('/')
 def index():
+    """Serve l'interface web"""
     return send_from_directory('static', 'index.html')
 
-@app.route('/<path:path>')
-def static_files(path):
-    return send_from_directory('static', path)
-
-@app.route('/api/config')
-def get_config():
-    return jsonify({
-        'databaseURL': os.environ.get('FIREBASE_URL', 'https://TON-PROJET.firebaseio.com')
-    })
-
-@app.route('/health')
-def health():
-    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()}), 200
-
 @app.route('/webhook/retell', methods=['POST'])
-def webhook_retell():
+def retell_webhook():
+    """Webhook pour recevoir les appels de Retell AI"""
     try:
         data = request.json
-        call = data.get('call', {})
+        print(f"Webhook Retell reçu: {json.dumps(data, indent=2)}")
         
-        transcript = call.get('transcript', '')
-        start_time = call.get('start_timestamp')
-        call_id = call.get('call_id')
-        duration = call.get('duration_ms', 0) // 1000
+        # Extraire les données de l'appel
+        call_data = data.get('call', {})
+        call_id = call_data.get('call_id')
+        transcript = call_data.get('transcript', '')
         
-        # ✅ VÉRIFIE SI DÉJÀ TRAITÉ
-        if is_duplicate_call(call_id, start_time):
-            return jsonify({'status': 'duplicate', 'message': 'Call already processed'}), 200
+        # Extraire le numéro de téléphone de l'appelant
+        from_number = call_data.get('from_number', 'Non fourni')
         
-        date_obj = datetime.fromtimestamp(start_time / 1000)
-        date_str = date_obj.strftime('%d/%m/%Y')
-        heure_str = date_obj.strftime('%H:%M')
+        if not transcript:
+            return jsonify({
+                'status': 'error',
+                'message': 'Pas de transcription disponible'
+            }), 400
         
-        # Analyse avec OpenAI
-        print(f"📞 Analyse appel {call_id} avec OpenAI...")
-        analyse = analyser_commande(transcript)
+        # Vérifier les doublons
+        ref = db.reference('orders')
+        existing_orders = ref.order_by_child('call_id').equal_to(call_id).get()
         
-        print(f"✅ Résultat: {analyse['type_appel']} - {analyse['articles']} - {analyse['prix_total']}€")
+        if existing_orders:
+            print(f"Commande {call_id} déjà traitée")
+            return jsonify({
+                'status': 'duplicate',
+                'call_id': call_id
+            }), 200
         
-        # Sauvegarde appel
-        ref_appels = db.reference('appels')
-        ref_appels.push({
-            'date': date_str,
-            'heure': heure_str,
+        # Analyser la commande avec OpenAI
+        order_analysis = analyzer.analyze_order(transcript)
+        
+        if not order_analysis:
+            return jsonify({
+                'status': 'error',
+                'message': 'Impossible d\'analyser la commande'
+            }), 500
+        
+        # Vérifier l'adresse de livraison
+        delivery_address = order_analysis.get('delivery_address', '')
+        address_info = verify_address(delivery_address)
+        
+        distance_km = 0
+        delivery_fee = 0
+        
+        if address_info['valid']:
+            # Calculer la distance
+            distance_km = calculate_distance(RESTAURANT_COORDS, address_info['coordinates'])
+            
+            # Calculer les frais de livraison (gratuit si > 20€)
+            subtotal = order_analysis.get('subtotal', 0)
+            delivery_fee = calculate_delivery_fee(distance_km, subtotal)
+        
+        # Calculer le total final
+        subtotal = order_analysis.get('subtotal', 0)
+        total = subtotal + delivery_fee
+        
+        # Créer la commande
+        order = {
             'call_id': call_id,
-            'duree': duration,
-            'type': analyse['type_appel'],
-            'cout': 0.79,
-            'timestamp': start_time
-        })
+            'phone_number': from_number,
+            'timestamp': datetime.now().isoformat(),
+            'items': order_analysis.get('items', []),
+            'delivery_address': delivery_address,
+            'address_verified': address_info['valid'],
+            'formatted_address': address_info.get('formatted_address', delivery_address),
+            'distance_km': distance_km,
+            'subtotal': subtotal,
+            'delivery_fee': delivery_fee,
+            'delivery_fee_waived': delivery_fee == 0 and subtotal > 20,
+            'total': total,
+            'notes': order_analysis.get('notes', ''),
+            'status': 'pending',
+            'transcript': transcript[:500]
+        }
         
-        # Si commande valide
-        if analyse['type_appel'] == 'commande' and analyse['nombre_articles'] > 0:
-            numero_commande = f"CMD-{date_obj.strftime('%Y%m%d-%H%M%S')}"
-            
-            ref_commandes = db.reference('commandes')
-            new_ref = ref_commandes.push({
-                'numero': numero_commande,
-                'date': date_str,
-                'heure': heure_str,
-                'type_service': analyse['type_service'],
-                'articles': analyse['articles'],
-                'total': analyse['prix_total'],
-                'statut': 'En attente',
-                'call_id': call_id,
-                'notes': analyse.get('notes', ''),
-                'timestamp': start_time
-            })
-            
-            print(f"💾 Commande sauvegardée: {numero_commande}")
+        # Sauvegarder dans Firebase
+        new_order_ref = ref.push(order)
+        
+        print(f"✅ Commande {call_id} créée: {new_order_ref.key}")
+        print(f"   📞 Tel: {from_number}")
+        print(f"   📍 Distance: {distance_km}km")
+        print(f"   💰 Total: {total}€ (Livraison: {delivery_fee}€)")
         
         return jsonify({
             'status': 'success',
-            'type': analyse['type_appel'],
-            'articles': analyse['articles'],
-            'total': analyse['prix_total']
+            'order_id': new_order_ref.key,
+            'call_id': call_id,
+            'total': total,
+            'delivery_fee': delivery_fee,
+            'delivery_fee_waived': delivery_fee == 0 and subtotal > 20
         }), 200
         
     except Exception as e:
-        print(f"❌ Erreur webhook: {e}")
+        print(f"❌ Erreur webhook: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
-@app.route('/api/commande/<commande_id>/statut', methods=['PUT'])
-def update_statut(commande_id):
-    try:
-        data = request.json
-        nouveau_statut = data.get('statut', 'Prête')
-        
-        ref = db.reference(f'commandes/{commande_id}')
-        ref.update({'statut': nouveau_statut})
-        
-        return jsonify({'status': 'success'}), 200
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Chicken Hot Dreux - Order System'
+    }), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

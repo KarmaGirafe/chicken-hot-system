@@ -1,23 +1,15 @@
-// Configuration Firebase - À REMPLACER avec tes vraies valeurs
-const firebaseConfig = {
-  apiKey: "AIzaSyDwcFMTbMUWaxD8bauWsjWbORyXMu3SSpM",
-  authDomain: "chicken-hot-dreux.firebaseapp.com",
-  databaseURL: "https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "chicken-hot-dreux",
-  storageBucket: "chicken-hot-dreux.firebasestorage.app",
-  messagingSenderId: "681275425785",
-  appId: "1:681275425785:web:564d2f96ba3dcce0913328",
-  measurementId: "G-ETLFE74H4G"
+// Configuration Firebase
+const FIREBASE_URL = 'https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app';
+
+let orders = {};
+let stats = {
+    total: 0,
+    pending: 0,
+    revenue: 0
 };
 
-// Initialiser Firebase
-firebase.initializeApp(firebaseConfig);
-const database = firebase.database();
-
-let currentOrders = {};
-let lastOrderTime = 0;
-
-function formatDate(isoString) {
+// Fonction pour formater la date/heure
+function formatDateTime(isoString) {
     const date = new Date(isoString);
     return date.toLocaleString('fr-FR', {
         day: '2-digit',
@@ -28,160 +20,205 @@ function formatDate(isoString) {
     });
 }
 
-function formatPrice(price) {
-    return typeof price === 'number' ? price.toFixed(2) : '0.00';
+// Fonction pour déterminer la classe CSS du type de service
+function getTypeClass(typeService) {
+    if (typeService === 'Livraison') return 'type-livraison';
+    if (typeService === 'À emporter') return 'type-emporter';
+    if (typeService === 'Sur place') return 'type-surplace';
+    return 'type-default';
 }
 
-function createOrderCard(orderId, order) {
-    const isNew = new Date(order.timestamp).getTime() > lastOrderTime;
+// Fonction pour créer le HTML d'une commande
+function createOrderHTML(orderId, order) {
+    const typeService = order.type_service || 'Non spécifié';
+    const isDelivery = typeService === 'Livraison';
     
-    const deliveryFeeDisplay = order.delivery_fee_waived 
-        ? `<span class="free-badge">GRATUIT</span>` 
-        : `${formatPrice(order.delivery_fee)}€`;
-
-    const addressClass = order.address_verified ? 'address-verified' : 'address-unverified';
-    const addressIcon = order.address_verified ? '✓' : '⚠';
-    
-    return `
-        <div class="order-card ${isNew ? 'new' : ''}" id="order-${orderId}">
-            <div class="order-header">
-                <div class="order-time">${formatDate(order.timestamp)}</div>
-                <div class="order-status">Nouvelle</div>
-            </div>
-
-            <div class="customer-info">
-                <div class="info-row">
-                    <span class="info-label">📞 Téléphone:</span>
-                    <span class="info-value phone-number">${order.phone_number || 'Non fourni'}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">${addressIcon} Adresse:</span>
-                    <span class="info-value ${addressClass}">${order.formatted_address || order.delivery_address || 'Non fournie'}</span>
-                </div>
+    // Affichage conditionnel du téléphone et de l'adresse
+    let contactHTML = '';
+    if (isDelivery) {
+        contactHTML = `
+            <div class="contact-info">
+                ${order.phone_number && order.phone_number !== 'Non fourni' ? `
+                    <p><strong>📞 Téléphone:</strong> <span class="phone-number">${order.phone_number}</span></p>
+                ` : ''}
+                ${order.formatted_address || order.delivery_address ? `
+                    <p><strong>📍 Adresse:</strong> <span class="delivery-address">${order.formatted_address || order.delivery_address}</span></p>
+                ` : ''}
                 ${order.distance_km > 0 ? `
-                <div class="info-row">
-                    <span class="info-label">📍 Distance:</span>
-                    <span class="info-value distance">${order.distance_km} km</span>
-                </div>
+                    <p class="distance">Distance: ${order.distance_km} km</p>
                 ` : ''}
             </div>
-
-            <div class="items-list">
-                ${order.items.map(item => `
-                    <div class="item">
-                        <span>
-                            <span class="item-quantity">${item.quantity}x</span>
-                            <span class="item-name">${item.name}</span>
-                        </span>
-                        <span class="item-price">${formatPrice(item.total_price)}€</span>
-                    </div>
-                `).join('')}
+        `;
+    }
+    
+    // Items
+    const itemsHTML = order.items.map(item => `
+        <div class="item">
+            <span class="item-name">
+                <span class="item-quantity">${item.quantity}×</span>
+                ${item.name}
+            </span>
+            <span class="item-price">${item.total_price.toFixed(2)}€</span>
+        </div>
+    `).join('');
+    
+    // Frais de livraison (seulement si livraison)
+    let deliveryFeeHTML = '';
+    if (isDelivery) {
+        if (order.delivery_fee_waived) {
+            deliveryFeeHTML = `
+                <div class="price-row delivery-free">
+                    <span>Frais de livraison (offerts)</span>
+                    <span>0.00€</span>
+                </div>
+            `;
+        } else if (order.delivery_fee > 0) {
+            deliveryFeeHTML = `
+                <div class="price-row delivery-fee">
+                    <span>Frais de livraison</span>
+                    <span>+${order.delivery_fee.toFixed(2)}€</span>
+                </div>
+            `;
+        }
+    }
+    
+    // Notes
+    const notesHTML = order.notes && order.notes !== '' ? `
+        <div class="order-notes">
+            <p><strong>📝 Notes:</strong> ${order.notes}</p>
+        </div>
+    ` : '';
+    
+    return `
+        <div class="order-card" data-type="${typeService}" data-id="${orderId}">
+            <div class="order-header">
+                <span class="order-time">${formatDateTime(order.timestamp)}</span>
+                <span class="status-badge status-${order.status || 'pending'}">
+                    ${order.status === 'completed' ? 'Terminée' : 'Nouvelle'}
+                </span>
             </div>
-
-            <div class="order-total">
-                <div class="total-row subtotal">
-                    <span>Sous-total:</span>
-                    <span>${formatPrice(order.subtotal)}€</span>
+            
+            <div class="order-type ${getTypeClass(typeService)}">
+                ${typeService}
+            </div>
+            
+            ${contactHTML}
+            
+            <div class="order-items">
+                ${itemsHTML}
+            </div>
+            
+            <div class="order-pricing">
+                <div class="price-row subtotal">
+                    <span>Sous-total</span>
+                    <span>${order.subtotal.toFixed(2)}€</span>
                 </div>
-                <div class="total-row delivery ${order.delivery_fee_waived ? 'free' : ''}">
-                    <span>Frais de livraison:</span>
-                    <span>${deliveryFeeDisplay}</span>
-                </div>
-                <div class="total-row final">
-                    <span>TOTAL:</span>
-                    <span>${formatPrice(order.total)}€</span>
+                ${deliveryFeeHTML}
+                <div class="price-row total">
+                    <span>TOTAL</span>
+                    <span>${order.total.toFixed(2)}€</span>
                 </div>
             </div>
-
-            ${order.notes ? `
-                <div class="notes">
-                    <strong>📝 Notes:</strong> ${order.notes}
-                </div>
-            ` : ''}
+            
+            ${notesHTML}
         </div>
     `;
 }
 
-function renderOrders() {
-    const ordersContainer = document.getElementById('orders');
-    const noOrdersDiv = document.getElementById('no-orders');
-    const loadingDiv = document.getElementById('loading');
+// Fonction pour mettre à jour les statistiques
+function updateStats() {
+    const ordersList = Object.values(orders);
     
-    if (loadingDiv) loadingDiv.style.display = 'none';
+    stats.total = ordersList.length;
+    stats.pending = ordersList.filter(o => o.status === 'pending').length;
+    stats.revenue = ordersList.reduce((sum, o) => sum + (o.total || 0), 0);
     
-    const orderEntries = Object.entries(currentOrders);
+    document.getElementById('total-orders').textContent = stats.total;
+    document.getElementById('pending-orders').textContent = stats.pending;
+    document.getElementById('total-revenue').textContent = stats.revenue.toFixed(2) + '€';
+}
+
+// Fonction pour afficher toutes les commandes
+function displayOrders() {
+    const container = document.getElementById('orders-container');
     
-    if (orderEntries.length === 0) {
-        ordersContainer.innerHTML = '';
-        if (noOrdersDiv) noOrdersDiv.style.display = 'block';
+    if (Object.keys(orders).length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <h2>🍗 En attente de commandes...</h2>
+                <p>Les nouvelles commandes apparaîtront automatiquement ici</p>
+            </div>
+        `;
         return;
     }
     
-    if (noOrdersDiv) noOrdersDiv.style.display = 'none';
+    // Trier les commandes par date (plus récentes en premier)
+    const sortedOrders = Object.entries(orders)
+        .sort((a, b) => new Date(b[1].timestamp) - new Date(a[1].timestamp));
     
-    // Trier par timestamp décroissant
-    orderEntries.sort((a, b) => {
-        return new Date(b[1].timestamp) - new Date(a[1].timestamp);
-    });
-    
-    ordersContainer.innerHTML = orderEntries
-        .map(([id, order]) => createOrderCard(id, order))
+    container.innerHTML = sortedOrders
+        .map(([id, order]) => createOrderHTML(id, order))
         .join('');
-    
-    // Mettre à jour le dernier timestamp
-    lastOrderTime = Math.max(lastOrderTime, 
-        ...orderEntries.map(([_, order]) => new Date(order.timestamp).getTime())
-    );
 }
 
-// Écouter les changements en temps réel
-const ordersRef = database.ref('orders');
-
-ordersRef.on('value', (snapshot) => {
-    if (snapshot.exists()) {
-        currentOrders = snapshot.val();
-        renderOrders();
-    } else {
-        currentOrders = {};
-        renderOrders();
-    }
-}, (error) => {
-    console.error('Erreur Firebase:', error);
-    const loadingDiv = document.getElementById('loading');
-    if (loadingDiv) loadingDiv.style.display = 'none';
+// Fonction pour écouter les nouvelles commandes en temps réel
+function listenToOrders() {
+    const ordersRef = `${FIREBASE_URL}/orders.json`;
     
-    const errorDiv = document.getElementById('error');
-    if (errorDiv) {
-        errorDiv.textContent = 'Erreur de connexion: ' + error.message;
-        errorDiv.style.display = 'block';
-    }
-});
+    // Première récupération
+    fetch(ordersRef)
+        .then(response => response.json())
+        .then(data => {
+            if (data) {
+                orders = data;
+                displayOrders();
+                updateStats();
+            }
+        })
+        .catch(error => {
+            console.error('Erreur de chargement:', error);
+        });
+    
+    // Polling toutes les 2 secondes pour les mises à jour
+    setInterval(() => {
+        fetch(ordersRef)
+            .then(response => response.json())
+            .then(data => {
+                if (data) {
+                    const oldCount = Object.keys(orders).length;
+                    orders = data;
+                    const newCount = Object.keys(orders).length;
+                    
+                    // Nouvelle commande détectée
+                    if (newCount > oldCount) {
+                        // Son de notification (optionnel)
+                        playNotificationSound();
+                    }
+                    
+                    displayOrders();
+                    updateStats();
+                }
+            })
+            .catch(error => {
+                console.error('Erreur de mise à jour:', error);
+            });
+    }, 2000);
+}
 
-// Notification sonore pour nouvelles commandes
-const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSiJ0fPTgjMGHm7A7+OZRQ0PVqzn77BdGAo+ltryxnUrBSp+zPPaizsIGGS57OihUBELTKXh8bllHAU2jdXzzn0pBSh4yPDejkILEVu16+yiVBMKRp/g8r9uIQUrhM/z24U3Bhxqvu7mnEgODlSq5++wYBkKPJPY8sl3KgUqfsrz2Ys5CBdlu+zpoVIRDEqj4PK8aR0FNIzU8859KQUpeMnw3oxDCxFZs+rsoVQTCkSe3/G/bSIFKYLN8txBNQYbab3t56FGDg1Sq+Xwr18aCjuR1/LJdioFKn7J8tmLOwgXZLns6aFSEQxKo+DyvGkdBTSM1PLPfCkFKXjJ8N6MQwsRWbPq7KFUEwpEnt/xwW0iBCmCzfPcQTUGG2m87OahRw4NUqvl8K9fGgo7kdbyynYqBSp+yPLaizsIF2S57OmhUhEMSqPg8rxpHQU0jNTyz3wpBSl4yfDejEMLEVmz6uyhVBMKRJ7f8cFtIgQpgs3z3EE1Bhtpve7noUcODVKr5fCvXxoKO5HW8sp2KgUqfsny2os7CBdkuexxZWxlcXNjbHNkZmdoamtsbmxsZ2VlZGRhYV9dXl1bWllZWFdXVlVUU1JSUVBPTk1MSUhHRkRDQkE/Pj07Ojg3NTQyMTAvLi0sKyopKCYlJCMiISAfHR0dHBwaGhkXFhUVExIREBAPDg0NDAsLCgoICQgHBgUFBAMDAgEBAQA=');
-
-let firstLoad = true;
-let previousOrderCount = 0;
-
+// Fonction pour jouer un son de notification (optionnel)
 function playNotificationSound() {
-    if (!firstLoad) {
-        audio.play().catch(e => console.log('Erreur son:', e));
+    // Vous pouvez ajouter un fichier audio ici si vous voulez
+    // const audio = new Audio('notification.mp3');
+    // audio.play().catch(e => console.log('Audio playback failed:', e));
+    
+    // Alternative: vibration si supportée
+    if ('vibrate' in navigator) {
+        navigator.vibrate(200);
     }
-    firstLoad = false;
 }
-
-// Jouer un son lors d'une nouvelle commande
-ordersRef.on('value', (snapshot) => {
-    if (snapshot.exists()) {
-        const orderCount = Object.keys(snapshot.val()).length;
-        if (orderCount > previousOrderCount && previousOrderCount > 0) {
-            playNotificationSound();
-        }
-        previousOrderCount = orderCount;
-    }
-});
 
 // Initialisation au chargement de la page
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🍗 Chicken Hot Dreux - Interface chargée');
+    listenToOrders();
 });

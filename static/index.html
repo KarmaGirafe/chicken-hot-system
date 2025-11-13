@@ -3,49 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🍔 Echo Link - Commandes Restaurant</title>
+    <title>Chicken Hot Dreux - Commandes</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <!-- En-tête -->
-        <header class="header">
-            <h1>📱 COMMANDES EN DIRECT</h1>
-            <div class="status">
-                <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">Connexion...</span>
-            </div>
-        </header>
-
-        <!-- Compteur de commandes -->
-        <div class="stats">
-            <div class="stat-card">
-                <span class="stat-number" id="commandesCount">0</span>
-                <span class="stat-label">Commandes en attente</span>
-            </div>
+        <div class="header">
+            <h1>🍗 Chicken Hot Dreux</h1>
+            <p><span class="status-indicator"></span>Commandes en temps réel</p>
         </div>
 
-        <!-- Grille de commandes -->
-        <div class="commandes-grid" id="commandesGrid">
-            <div class="empty-state">
-                <div class="empty-icon">✨</div>
-                <p>Aucune commande en attente</p>
-                <small>Les nouvelles commandes apparaîtront ici automatiquement</small>
-            </div>
+        <div id="loading" class="loading">
+            Chargement des commandes...
         </div>
 
-        <!-- Footer -->
-        <footer>
-            <p>🔗 Powered by <strong>Echo Link</strong> - Votre réceptionniste IA 24/7</p>
-        </footer>
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="orders" class="orders-grid"></div>
+
+        <div id="no-orders" class="no-orders" style="display: none;">
+            Aucune commande pour le moment
+        </div>
     </div>
 
-    <!-- Sons notification -->
-    <audio id="notificationSound" preload="auto">
-        <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
-    </audio>
-
-    <!-- Firebase -->
+    <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     

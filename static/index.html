@@ -4,7 +4,267 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chicken Hot Dreux - Commandes</title>
-    <link rel="stylesheet" href="style.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #4CAF50;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .orders-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .order-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .order-time {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .order-status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            background: #4CAF50;
+            color: white;
+        }
+
+        .customer-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .info-row {
+            display: flex;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #667eea;
+            min-width: 100px;
+        }
+
+        .info-value {
+            color: #333;
+            flex: 1;
+        }
+
+        .phone-number {
+            color: #2196F3;
+            font-weight: bold;
+        }
+
+        .address-verified {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .address-unverified {
+            color: #ff9800;
+            font-weight: bold;
+        }
+
+        .distance {
+            color: #9c27b0;
+            font-weight: bold;
+        }
+
+        .items-list {
+            margin: 15px 0;
+        }
+
+        .item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .item-name {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .item-quantity {
+            color: #667eea;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .item-price {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .order-total {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 2px solid #667eea;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 1em;
+        }
+
+        .total-row.subtotal {
+            color: #666;
+        }
+
+        .total-row.delivery {
+            color: #2196F3;
+        }
+
+        .total-row.delivery.free {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .total-row.final {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #667eea;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 2px dashed #e0e0e0;
+        }
+
+        .free-badge {
+            background: #4CAF50;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            margin-left: 8px;
+            font-weight: bold;
+        }
+
+        .notes {
+            margin-top: 15px;
+            padding: 12px;
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            border-radius: 5px;
+            font-size: 0.9em;
+            color: #856404;
+        }
+
+        .no-orders {
+            text-align: center;
+            color: white;
+            font-size: 1.5em;
+            margin-top: 50px;
+        }
+
+        .loading {
+            text-align: center;
+            color: white;
+            font-size: 1.2em;
+            margin-top: 50px;
+        }
+
+        .error {
+            background: #f44336;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .orders-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -30,7 +290,171 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     
-    <!-- App JS -->
-    <script src="app.js"></script>
+    <script>
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDwcFMTbMUWaxD8bauWsjWbORyXMu3SSpM",
+            authDomain: "chicken-hot-dreux.firebaseapp.com",
+            databaseURL: "https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "chicken-hot-dreux",
+            storageBucket: "chicken-hot-dreux.firebasestorage.app",
+            messagingSenderId: "681275425785",
+            appId: "1:681275425785:web:564d2f96ba3dcce0913328",
+            measurementId: "G-ETLFE74H4G"
+        };
+
+        // Initialiser Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        let currentOrders = {};
+        let lastOrderTime = 0;
+
+        function formatDate(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleString('fr-FR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function formatPrice(price) {
+            return typeof price === 'number' ? price.toFixed(2) : '0.00';
+        }
+
+        function createOrderCard(orderId, order) {
+            const isNew = new Date(order.timestamp).getTime() > lastOrderTime;
+            
+            const deliveryFeeDisplay = order.delivery_fee_waived 
+                ? `<span class="free-badge">GRATUIT</span>` 
+                : `${formatPrice(order.delivery_fee)}€`;
+
+            const addressClass = order.address_verified ? 'address-verified' : 'address-unverified';
+            const addressIcon = order.address_verified ? '✓' : '⚠';
+            
+            return `
+                <div class="order-card ${isNew ? 'new' : ''}" id="order-${orderId}">
+                    <div class="order-header">
+                        <div class="order-time">${formatDate(order.timestamp)}</div>
+                        <div class="order-status">Nouvelle</div>
+                    </div>
+
+                    <div class="customer-info">
+                        <div class="info-row">
+                            <span class="info-label">📞 Téléphone:</span>
+                            <span class="info-value phone-number">${order.phone_number || 'Non fourni'}</span>
+                        </div>
+                        ${order.delivery_address ? `
+                        <div class="info-row">
+                            <span class="info-label">${addressIcon} Adresse:</span>
+                            <span class="info-value ${addressClass}">${order.formatted_address || order.delivery_address}</span>
+                        </div>
+                        ` : ''}
+                        ${order.distance_km > 0 ? `
+                        <div class="info-row">
+                            <span class="info-label">📍 Distance:</span>
+                            <span class="info-value distance">${order.distance_km} km</span>
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="items-list">
+                        ${order.items.map(item => `
+                            <div class="item">
+                                <span>
+                                    <span class="item-quantity">${item.quantity}x</span>
+                                    <span class="item-name">${item.name}</span>
+                                </span>
+                                <span class="item-price">${formatPrice(item.total_price)}€</span>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="order-total">
+                        <div class="total-row subtotal">
+                            <span>Sous-total:</span>
+                            <span>${formatPrice(order.subtotal)}€</span>
+                        </div>
+                        ${order.delivery_fee !== undefined ? `
+                        <div class="total-row delivery ${order.delivery_fee_waived ? 'free' : ''}">
+                            <span>Frais de livraison:</span>
+                            <span>${deliveryFeeDisplay}</span>
+                        </div>
+                        ` : ''}
+                        <div class="total-row final">
+                            <span>TOTAL:</span>
+                            <span>${formatPrice(order.total)}€</span>
+                        </div>
+                    </div>
+
+                    ${order.notes ? `
+                        <div class="notes">
+                            <strong>📝 Notes:</strong> ${order.notes}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function renderOrders() {
+            const ordersContainer = document.getElementById('orders');
+            const noOrdersDiv = document.getElementById('no-orders');
+            const loadingDiv = document.getElementById('loading');
+            
+            if (loadingDiv) loadingDiv.style.display = 'none';
+            
+            const orderEntries = Object.entries(currentOrders);
+            
+            if (orderEntries.length === 0) {
+                ordersContainer.innerHTML = '';
+                if (noOrdersDiv) noOrdersDiv.style.display = 'block';
+                return;
+            }
+            
+            if (noOrdersDiv) noOrdersDiv.style.display = 'none';
+            
+            // Trier par timestamp décroissant
+            orderEntries.sort((a, b) => {
+                return new Date(b[1].timestamp) - new Date(a[1].timestamp);
+            });
+            
+            ordersContainer.innerHTML = orderEntries
+                .map(([id, order]) => createOrderCard(id, order))
+                .join('');
+            
+            // Mettre à jour le dernier timestamp
+            lastOrderTime = Math.max(lastOrderTime, 
+                ...orderEntries.map(([_, order]) => new Date(order.timestamp).getTime())
+            );
+        }
+
+        // Écouter les changements en temps réel
+        const ordersRef = database.ref('orders');
+
+        ordersRef.on('value', (snapshot) => {
+            if (snapshot.exists()) {
+                currentOrders = snapshot.val();
+                renderOrders();
+            } else {
+                currentOrders = {};
+                renderOrders();
+            }
+        }, (error) => {
+            console.error('Erreur Firebase:', error);
+            const loadingDiv = document.getElementById('loading');
+            if (loadingDiv) loadingDiv.style.display = 'none';
+            
+            const errorDiv = document.getElementById('error');
+            if (errorDiv) {
+                errorDiv.textContent = 'Erreur de connexion Firebase: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        });
+
+        console.log('🍗 Chicken Hot Dreux - Interface chargée');
+    </script>
 </body>
 </html>

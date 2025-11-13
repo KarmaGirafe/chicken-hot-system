@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify, send_from_directory
-from order_analyzer import OrderAnalyzer
 import firebase_admin
 from firebase_admin import credentials, db
 import os
@@ -8,10 +7,12 @@ from datetime import datetime
 import requests
 from geopy.distance import geodesic
 
+# Import des fonctions depuis l'order_analyzer existant
+from order_analyzer import analyser_commande
+
 app = Flask(__name__, static_folder='static')
 
 # Configuration
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 FIREBASE_URL = os.environ.get('FIREBASE_URL')
 
 # Coordonnées du restaurant Chicken Hot Dreux
@@ -33,9 +34,6 @@ else:
 firebase_admin.initialize_app(cred, {
     'databaseURL': FIREBASE_URL
 })
-
-# Initialiser l'analyseur de commandes
-analyzer = OrderAnalyzer(OPENAI_API_KEY)
 
 def verify_address(address):
     """Vérifie l'adresse avec Nominatim et retourne les coordonnées"""
@@ -88,6 +86,23 @@ def calculate_delivery_fee(distance_km, order_total):
     else:
         return 5.00
 
+def extract_delivery_info(analysis):
+    """Extrait l'adresse de livraison depuis l'analyse"""
+    # Cherche dans les notes
+    notes = analysis.get('notes', '').lower()
+    
+    # Patterns simples pour détecter une adresse
+    if 'livraison' in notes or 'livrer' in notes or 'adresse' in notes:
+        # Essaie d'extraire l'adresse des notes
+        # Format type: "Livraison au 15 rue de la République"
+        return notes.replace('livraison', '').replace('livrer', '').replace('au', '').strip()
+    
+    # Si type_service indique livraison
+    if analysis.get('type_service', '') == 'Livraison':
+        return notes  # Retourne les notes complètes
+    
+    return ''
+
 @app.route('/')
 def index():
     """Serve l'interface web"""
@@ -125,49 +140,77 @@ def retell_webhook():
                 'call_id': call_id
             }), 200
         
-        # Analyser la commande avec OpenAI
-        order_analysis = analyzer.analyze_order(transcript)
+        # Analyser la commande avec la fonction existante
+        analysis = analyser_commande(transcript)
         
-        if not order_analysis:
+        if not analysis:
             return jsonify({
                 'status': 'error',
                 'message': 'Impossible d\'analyser la commande'
             }), 500
         
-        # Vérifier l'adresse de livraison
-        delivery_address = order_analysis.get('delivery_address', '')
-        address_info = verify_address(delivery_address)
-        
+        # Extraire l'adresse de livraison
+        delivery_address = extract_delivery_info(analysis)
+        address_info = {'valid': False}
         distance_km = 0
         delivery_fee = 0
         
-        if address_info['valid']:
-            # Calculer la distance
-            distance_km = calculate_distance(RESTAURANT_COORDS, address_info['coordinates'])
+        if delivery_address:
+            # Vérifier l'adresse
+            address_info = verify_address(delivery_address)
             
-            # Calculer les frais de livraison (gratuit si > 20€)
-            subtotal = order_analysis.get('subtotal', 0)
-            delivery_fee = calculate_delivery_fee(distance_km, subtotal)
+            if address_info['valid']:
+                # Calculer la distance
+                distance_km = calculate_distance(RESTAURANT_COORDS, address_info['coordinates'])
+                
+                # Calculer les frais de livraison (gratuit si > 20€)
+                subtotal = analysis.get('prix_total', 0)
+                delivery_fee = calculate_delivery_fee(distance_km, subtotal)
         
         # Calculer le total final
-        subtotal = order_analysis.get('subtotal', 0)
+        subtotal = analysis.get('prix_total', 0)
         total = subtotal + delivery_fee
+        
+        # Convertir les articles en format liste
+        articles_str = analysis.get('articles', 'Non spécifié')
+        items = []
+        
+        if 'articles_detailles' in analysis:
+            items = [
+                {
+                    'name': art['nom'],
+                    'quantity': art.get('quantite', 1),
+                    'unit_price': art.get('prix', 0),
+                    'total_price': art.get('prix', 0) * art.get('quantite', 1)
+                }
+                for art in analysis['articles_detailles']
+            ]
+        else:
+            # Fallback: créer un item simple
+            items = [{
+                'name': articles_str,
+                'quantity': 1,
+                'unit_price': subtotal,
+                'total_price': subtotal
+            }]
         
         # Créer la commande
         order = {
             'call_id': call_id,
             'phone_number': from_number,
             'timestamp': datetime.now().isoformat(),
-            'items': order_analysis.get('items', []),
+            'type_appel': analysis.get('type_appel', 'commande'),
+            'type_service': analysis.get('type_service', 'Non spécifié'),
+            'items': items,
             'delivery_address': delivery_address,
-            'address_verified': address_info['valid'],
+            'address_verified': address_info.get('valid', False),
             'formatted_address': address_info.get('formatted_address', delivery_address),
             'distance_km': distance_km,
             'subtotal': subtotal,
             'delivery_fee': delivery_fee,
             'delivery_fee_waived': delivery_fee == 0 and subtotal > 20,
             'total': total,
-            'notes': order_analysis.get('notes', ''),
+            'notes': analysis.get('notes', ''),
             'status': 'pending',
             'transcript': transcript[:500]
         }

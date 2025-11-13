@@ -111,13 +111,15 @@ def retell_webhook():
                 'message': 'Pas de transcription'
             }), 400
         
-        # Vérifier les doublons
+        # Vérifier les doublons (sans index)
         ref = db.reference('orders')
-        existing_orders = ref.order_by_child('call_id').equal_to(call_id).get()
+        all_orders = ref.get()
         
-        if existing_orders:
-            print(f"⚠️ Commande {call_id} déjà traitée")
-            return jsonify({'status': 'duplicate', 'call_id': call_id}), 200
+        if all_orders:
+            for order_id, order_data in all_orders.items():
+                if order_data.get('call_id') == call_id:
+                    print(f"⚠️ Commande {call_id} déjà traitée")
+                    return jsonify({'status': 'duplicate', 'call_id': call_id}), 200
         
         # Analyser la commande
         print(f"🤖 Analyse de la commande...")
@@ -128,13 +130,15 @@ def retell_webhook():
         
         print(f"✅ Analyse OK: {analysis.get('articles', 'N/A')}")
         
-        # Traiter l'adresse de livraison
+        # Traiter l'adresse de livraison SEULEMENT si c'est une livraison
+        type_service = analysis.get('type_service', 'Non spécifié')
         delivery_address = analysis.get('adresse_livraison', '')
         address_info = {'valid': False}
         distance_km = 0
         delivery_fee = 0
         
-        if delivery_address and delivery_address != '':
+        # Calculer les frais de livraison UNIQUEMENT si c'est une livraison
+        if type_service == 'Livraison' and delivery_address and delivery_address != '':
             print(f"📍 Vérification adresse: {delivery_address}")
             address_info = verify_address(delivery_address)
             
@@ -145,6 +149,9 @@ def retell_webhook():
                 subtotal = analysis.get('prix_total', 0)
                 delivery_fee = calculate_delivery_fee(distance_km, subtotal)
                 print(f"💰 Frais livraison: {delivery_fee}€ (sous-total: {subtotal}€)")
+        else:
+            # Pas de frais de livraison pour sur place ou à emporter
+            delivery_fee = 0
         
         # Calculer le total
         subtotal = analysis.get('prix_total', 0)
@@ -176,15 +183,15 @@ def retell_webhook():
             'phone_number': from_number,
             'timestamp': datetime.now().isoformat(),
             'type_appel': analysis.get('type_appel', 'commande'),
-            'type_service': analysis.get('type_service', 'Non spécifié'),
+            'type_service': type_service,
             'items': items,
-            'delivery_address': delivery_address,
+            'delivery_address': delivery_address if type_service == 'Livraison' else '',
             'address_verified': address_info.get('valid', False),
-            'formatted_address': address_info.get('formatted_address', delivery_address),
+            'formatted_address': address_info.get('formatted_address', delivery_address) if type_service == 'Livraison' else '',
             'distance_km': distance_km,
             'subtotal': subtotal,
             'delivery_fee': delivery_fee,
-            'delivery_fee_waived': delivery_fee == 0 and subtotal > 20,
+            'delivery_fee_waived': delivery_fee == 0 and subtotal > 20 and type_service == 'Livraison',
             'total': total,
             'notes': analysis.get('notes', ''),
             'status': 'pending',

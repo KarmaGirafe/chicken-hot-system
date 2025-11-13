@@ -1,196 +1,187 @@
-let database;
-let commandesRef;
-let commandesActives = new Map();
-let isFirstLoad = true;
+// Configuration Firebase - À REMPLACER avec tes vraies valeurs
+const firebaseConfig = {
+  apiKey: "AIzaSyDwcFMTbMUWaxD8bauWsjWbORyXMu3SSpM",
+  authDomain: "chicken-hot-dreux.firebaseapp.com",
+  databaseURL: "https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "chicken-hot-dreux",
+  storageBucket: "chicken-hot-dreux.firebasestorage.app",
+  messagingSenderId: "681275425785",
+  appId: "1:681275425785:web:564d2f96ba3dcce0913328",
+  measurementId: "G-ETLFE74H4G"
+};
 
-// Initialise Firebase
-async function initFirebase() {
-    try {
-        // Récupère la config depuis le backend
-        const response = await fetch('/api/config');
-        const config = await response.json();
-        
-        // Initialise Firebase
-        firebase.initializeApp(config);
-        database = firebase.database();
-        commandesRef = database.ref('commandes');
-        
-        // Écoute les changements en temps réel
-        commandesRef.on('child_added', (snapshot) => {
-            const commande = snapshot.val();
-            commande.id = snapshot.key;
-            
-            if (commande.statut === 'En attente') {
-                // Joue un son seulement après le premier chargement
-                if (!isFirstLoad) {
-                    playNotificationSound();
-                }
-                afficherCommande(commande, !isFirstLoad);
-            }
-        });
-        
-        commandesRef.on('child_changed', (snapshot) => {
-            const commande = snapshot.val();
-            commande.id = snapshot.key;
-            
-            if (commande.statut !== 'En attente') {
-                retirerCommande(commande.id);
-            }
-        });
-        
-        commandesRef.on('child_removed', (snapshot) => {
-            retirerCommande(snapshot.key);
-        });
-        
-        // Après 2 secondes, on considère que le chargement initial est terminé
-        setTimeout(() => {
-            isFirstLoad = false;
-        }, 2000);
-        
-        updateStatus(true);
-    } catch (error) {
-        console.error('Erreur Firebase:', error);
-        updateStatus(false);
-    }
+// Initialiser Firebase
+firebase.initializeApp(firebaseConfig);
+const database = firebase.database();
+
+let currentOrders = {};
+let lastOrderTime = 0;
+
+function formatDate(isoString) {
+    const date = new Date(isoString);
+    return date.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 }
 
-function updateStatus(connected) {
-    const dot = document.getElementById('statusDot');
-    const text = document.getElementById('statusText');
+function formatPrice(price) {
+    return typeof price === 'number' ? price.toFixed(2) : '0.00';
+}
+
+function createOrderCard(orderId, order) {
+    const isNew = new Date(order.timestamp).getTime() > lastOrderTime;
     
-    if (connected) {
-        dot.classList.add('connected');
-        text.textContent = 'Connecté';
-    } else {
-        dot.classList.remove('connected');
-        text.textContent = 'Déconnecté';
-    }
+    const deliveryFeeDisplay = order.delivery_fee_waived 
+        ? `<span class="free-badge">GRATUIT</span>` 
+        : `${formatPrice(order.delivery_fee)}€`;
+
+    const addressClass = order.address_verified ? 'address-verified' : 'address-unverified';
+    const addressIcon = order.address_verified ? '✓' : '⚠';
+    
+    return `
+        <div class="order-card ${isNew ? 'new' : ''}" id="order-${orderId}">
+            <div class="order-header">
+                <div class="order-time">${formatDate(order.timestamp)}</div>
+                <div class="order-status">Nouvelle</div>
+            </div>
+
+            <div class="customer-info">
+                <div class="info-row">
+                    <span class="info-label">📞 Téléphone:</span>
+                    <span class="info-value phone-number">${order.phone_number || 'Non fourni'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">${addressIcon} Adresse:</span>
+                    <span class="info-value ${addressClass}">${order.formatted_address || order.delivery_address || 'Non fournie'}</span>
+                </div>
+                ${order.distance_km > 0 ? `
+                <div class="info-row">
+                    <span class="info-label">📍 Distance:</span>
+                    <span class="info-value distance">${order.distance_km} km</span>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="items-list">
+                ${order.items.map(item => `
+                    <div class="item">
+                        <span>
+                            <span class="item-quantity">${item.quantity}x</span>
+                            <span class="item-name">${item.name}</span>
+                        </span>
+                        <span class="item-price">${formatPrice(item.total_price)}€</span>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div class="order-total">
+                <div class="total-row subtotal">
+                    <span>Sous-total:</span>
+                    <span>${formatPrice(order.subtotal)}€</span>
+                </div>
+                <div class="total-row delivery ${order.delivery_fee_waived ? 'free' : ''}">
+                    <span>Frais de livraison:</span>
+                    <span>${deliveryFeeDisplay}</span>
+                </div>
+                <div class="total-row final">
+                    <span>TOTAL:</span>
+                    <span>${formatPrice(order.total)}€</span>
+                </div>
+            </div>
+
+            ${order.notes ? `
+                <div class="notes">
+                    <strong>📝 Notes:</strong> ${order.notes}
+                </div>
+            ` : ''}
+        </div>
+    `;
 }
 
-function afficherCommande(commande, isNew = false) {
-    // ✅ Vérifie si la commande existe déjà dans le DOM
-    if (document.getElementById(`commande-${commande.id}`)) {
-        console.log('⚠️ Commande déjà affichée:', commande.id);
+function renderOrders() {
+    const ordersContainer = document.getElementById('orders');
+    const noOrdersDiv = document.getElementById('no-orders');
+    const loadingDiv = document.getElementById('loading');
+    
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    
+    const orderEntries = Object.entries(currentOrders);
+    
+    if (orderEntries.length === 0) {
+        ordersContainer.innerHTML = '';
+        if (noOrdersDiv) noOrdersDiv.style.display = 'block';
         return;
     }
     
-    commandesActives.set(commande.id, commande);
-    updateCommandesCount();
+    if (noOrdersDiv) noOrdersDiv.style.display = 'none';
     
-    const grid = document.getElementById('commandesGrid');
+    // Trier par timestamp décroissant
+    orderEntries.sort((a, b) => {
+        return new Date(b[1].timestamp) - new Date(a[1].timestamp);
+    });
     
-    // Retire l'état vide
-    const emptyState = grid.querySelector('.empty-state');
-    if (emptyState) {
-        emptyState.remove();
-    }
+    ordersContainer.innerHTML = orderEntries
+        .map(([id, order]) => createOrderCard(id, order))
+        .join('');
     
-    // Crée la carte
-    const card = document.createElement('div');
-    card.className = 'commande-card' + (isNew ? ' nouvelle' : '');
-    card.id = `commande-${commande.id}`;
-    
-    const serviceClass = commande.type_service.toLowerCase().replace(' ', '-');
-    
-    card.innerHTML = `
-        ${isNew ? '<span class="badge-nouvelle">🔔 NOUVELLE</span>' : ''}
-        <div class="commande-header">
-            <span class="commande-numero">🔔 ${commande.numero}</span>
-            <span class="commande-heure">🕐 ${commande.heure}</span>
-        </div>
-        <div class="commande-service ${serviceClass}">📍 ${commande.type_service}</div>
-        <div class="commande-articles">🍽️ ${commande.articles}</div>
-        <div class="commande-prix">💰 ${commande.total.toFixed(2)} €</div>
-        <button class="btn-prete" onclick="marquerPrete('${commande.id}')">
-            ✅ Commande Prête
-        </button>
-    `;
-    
-    grid.appendChild(card);
-    
-    console.log('✅ Commande affichée:', commande.numero);
-    
-    // Retire le badge "nouvelle" après 5 secondes
-    if (isNew) {
-        setTimeout(() => {
-            card.classList.remove('nouvelle');
-            const badge = card.querySelector('.badge-nouvelle');
-            if (badge) badge.remove();
-        }, 5000);
-    }
+    // Mettre à jour le dernier timestamp
+    lastOrderTime = Math.max(lastOrderTime, 
+        ...orderEntries.map(([_, order]) => new Date(order.timestamp).getTime())
+    );
 }
 
-function retirerCommande(commandeId) {
-    commandesActives.delete(commandeId);
-    updateCommandesCount();
-    
-    const card = document.getElementById(`commande-${commandeId}`);
-    if (card) {
-        card.style.animation = 'slideOut 0.3s ease-out';
-        setTimeout(() => card.remove(), 300);
-        console.log('✅ Commande retirée:', commandeId);
-    }
-    
-    // Si plus de commandes, affiche l'état vide
-    if (commandesActives.size === 0) {
-        const grid = document.getElementById('commandesGrid');
-        grid.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-icon">✨</div>
-                <p>Aucune commande en attente</p>
-                <small>Les nouvelles commandes apparaîtront ici automatiquement</small>
-            </div>
-        `;
-    }
-}
+// Écouter les changements en temps réel
+const ordersRef = database.ref('orders');
 
-function updateCommandesCount() {
-    document.getElementById('commandesCount').textContent = commandesActives.size;
-}
-
-async function marquerPrete(commandeId) {
-    try {
-        const response = await fetch(`/api/commande/${commandeId}/statut`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ statut: 'Prête' })
-        });
-        
-        if (response.ok) {
-            // La carte sera retirée automatiquement via Firebase
-            playSuccessSound();
-        }
-    } catch (error) {
-        console.error('Erreur:', error);
-        alert('Erreur lors de la mise à jour');
+ordersRef.on('value', (snapshot) => {
+    if (snapshot.exists()) {
+        currentOrders = snapshot.val();
+        renderOrders();
+    } else {
+        currentOrders = {};
+        renderOrders();
     }
-}
+}, (error) => {
+    console.error('Erreur Firebase:', error);
+    const loadingDiv = document.getElementById('loading');
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    
+    const errorDiv = document.getElementById('error');
+    if (errorDiv) {
+        errorDiv.textContent = 'Erreur de connexion: ' + error.message;
+        errorDiv.style.display = 'block';
+    }
+});
+
+// Notification sonore pour nouvelles commandes
+const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSiJ0fPTgjMGHm7A7+OZRQ0PVqzn77BdGAo+ltryxnUrBSp+zPPaizsIGGS57OihUBELTKXh8bllHAU2jdXzzn0pBSh4yPDejkILEVu16+yiVBMKRp/g8r9uIQUrhM/z24U3Bhxqvu7mnEgODlSq5++wYBkKPJPY8sl3KgUqfsrz2Ys5CBdlu+zpoVIRDEqj4PK8aR0FNIzU8859KQUpeMnw3oxDCxFZs+rsoVQTCkSe3/G/bSIFKYLN8txBNQYbab3t56FGDg1Sq+Xwr18aCjuR1/LJdioFKn7J8tmLOwgXZLns6aFSEQxKo+DyvGkdBTSM1PLPfCkFKXjJ8N6MQwsRWbPq7KFUEwpEnt/xwW0iBCmCzfPcQTUGG2m87OahRw4NUqvl8K9fGgo7kdbyynYqBSp+yPLaizsIF2S57OmhUhEMSqPg8rxpHQU0jNTyz3wpBSl4yfDejEMLEVmz6uyhVBMKRJ7f8cFtIgQpgs3z3EE1Bhtpve7noUcODVKr5fCvXxoKO5HW8sp2KgUqfsny2os7CBdkuexxZWxlcXNjbHNkZmdoamtsbmxsZ2VlZGRhYV9dXl1bWllZWFdXVlVUU1JSUVBPTk1MSUhHRkRDQkE/Pj07Ojg3NTQyMTAvLi0sKyopKCYlJCMiISAfHR0dHBwaGhkXFhUVExIREBAPDg0NDAsLCgoICQgHBgUFBAMDAgEBAQA=');
+
+let firstLoad = true;
+let previousOrderCount = 0;
 
 function playNotificationSound() {
-    const audio = document.getElementById('notificationSound');
-    audio.play().catch(e => console.log('Impossible de jouer le son'));
+    if (!firstLoad) {
+        audio.play().catch(e => console.log('Erreur son:', e));
+    }
+    firstLoad = false;
 }
 
-function playSuccessSound() {
-    // Son de succès simple
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.5);
-}
+// Jouer un son lors d'une nouvelle commande
+ordersRef.on('value', (snapshot) => {
+    if (snapshot.exists()) {
+        const orderCount = Object.keys(snapshot.val()).length;
+        if (orderCount > previousOrderCount && previousOrderCount > 0) {
+            playNotificationSound();
+        }
+        previousOrderCount = orderCount;
+    }
+});
 
-// Démarre l'app
-initFirebase();
+// Initialisation au chargement de la page
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🍗 Chicken Hot Dreux - Interface chargée');
+});

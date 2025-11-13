@@ -2,11 +2,6 @@
 const FIREBASE_URL = 'https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app';
 
 let orders = {};
-let stats = {
-    total: 0,
-    pending: 0,
-    revenue: 0
-};
 
 // Fonction pour formater la date/heure
 function formatDateTime(isoString) {
@@ -125,21 +120,42 @@ function createOrderHTML(orderId, order) {
     `;
 }
 
-// Fonction pour mettre à jour les statistiques
-function updateStats() {
-    const ordersList = Object.values(orders);
+// Fonction pour mettre à jour une commande existante ou l'ajouter
+function updateOrderElement(orderId, order) {
+    const container = document.getElementById('orders-container');
+    const existingCard = container.querySelector(`[data-id="${orderId}"]`);
     
-    stats.total = ordersList.length;
-    stats.pending = ordersList.filter(o => o.status === 'pending').length;
-    stats.revenue = ordersList.reduce((sum, o) => sum + (o.total || 0), 0);
+    const newHTML = createOrderHTML(orderId, order);
     
-    document.getElementById('total-orders').textContent = stats.total;
-    document.getElementById('pending-orders').textContent = stats.pending;
-    document.getElementById('total-revenue').textContent = stats.revenue.toFixed(2) + '€';
+    if (existingCard) {
+        // Mettre à jour la carte existante sans la faire disparaître
+        existingCard.outerHTML = newHTML;
+    } else {
+        // Nouvelle commande - l'ajouter au début
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = newHTML;
+        container.insertBefore(tempDiv.firstElementChild, container.firstChild);
+        
+        // Son de notification pour nouvelle commande
+        playNotificationSound();
+    }
 }
 
-// Fonction pour afficher toutes les commandes
-function displayOrders() {
+// Fonction pour supprimer les commandes qui n'existent plus
+function removeDeletedOrders(currentOrderIds) {
+    const container = document.getElementById('orders-container');
+    const existingCards = container.querySelectorAll('.order-card');
+    
+    existingCards.forEach(card => {
+        const orderId = card.getAttribute('data-id');
+        if (!currentOrderIds.includes(orderId)) {
+            card.remove();
+        }
+    });
+}
+
+// Fonction pour afficher toutes les commandes (initialisation)
+function displayAllOrders() {
     const container = document.getElementById('orders-container');
     
     if (Object.keys(orders).length === 0) {
@@ -152,13 +168,24 @@ function displayOrders() {
         return;
     }
     
+    // Supprimer le message "empty state" s'il existe
+    const emptyState = container.querySelector('.empty-state');
+    if (emptyState) {
+        emptyState.remove();
+    }
+    
     // Trier les commandes par date (plus récentes en premier)
     const sortedOrders = Object.entries(orders)
         .sort((a, b) => new Date(b[1].timestamp) - new Date(a[1].timestamp));
     
-    container.innerHTML = sortedOrders
-        .map(([id, order]) => createOrderHTML(id, order))
-        .join('');
+    // Mettre à jour ou ajouter chaque commande
+    sortedOrders.forEach(([id, order]) => {
+        updateOrderElement(id, order);
+    });
+    
+    // Supprimer les commandes qui n'existent plus
+    const currentOrderIds = sortedOrders.map(([id]) => id);
+    removeDeletedOrders(currentOrderIds);
 }
 
 // Fonction pour écouter les nouvelles commandes en temps réel
@@ -171,47 +198,32 @@ function listenToOrders() {
         .then(data => {
             if (data) {
                 orders = data;
-                displayOrders();
-                updateStats();
+                displayAllOrders();
             }
         })
         .catch(error => {
             console.error('Erreur de chargement:', error);
         });
     
-    // Polling toutes les 2 secondes pour les mises à jour
+    // Polling toutes les 3 secondes pour les mises à jour
     setInterval(() => {
         fetch(ordersRef)
             .then(response => response.json())
             .then(data => {
                 if (data) {
-                    const oldCount = Object.keys(orders).length;
                     orders = data;
-                    const newCount = Object.keys(orders).length;
-                    
-                    // Nouvelle commande détectée
-                    if (newCount > oldCount) {
-                        // Son de notification (optionnel)
-                        playNotificationSound();
-                    }
-                    
-                    displayOrders();
-                    updateStats();
+                    displayAllOrders();
                 }
             })
             .catch(error => {
                 console.error('Erreur de mise à jour:', error);
             });
-    }, 2000);
+    }, 3000);
 }
 
 // Fonction pour jouer un son de notification (optionnel)
 function playNotificationSound() {
-    // Vous pouvez ajouter un fichier audio ici si vous voulez
-    // const audio = new Audio('notification.mp3');
-    // audio.play().catch(e => console.log('Audio playback failed:', e));
-    
-    // Alternative: vibration si supportée
+    // Vibration si supportée
     if ('vibrate' in navigator) {
         navigator.vibrate(200);
     }

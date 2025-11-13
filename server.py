@@ -7,7 +7,7 @@ from datetime import datetime
 import requests
 from geopy.distance import geodesic
 
-# Import des fonctions depuis l'order_analyzer existant
+# Import de la fonction d'analyse
 from order_analyzer import analyser_commande
 
 app = Flask(__name__, static_folder='static')
@@ -21,14 +21,12 @@ RESTAURANT_COORDS = (48.7333, 1.3667)  # Dreux, France
 # Initialiser Firebase
 firebase_key = os.environ.get('FIREBASE_KEY')
 if firebase_key:
-    # Si la clé est une chaîne JSON
     if isinstance(firebase_key, str):
         cred_dict = json.loads(firebase_key)
     else:
         cred_dict = firebase_key
     cred = credentials.Certificate(cred_dict)
 else:
-    # Sinon utiliser le fichier
     cred = credentials.Certificate('firebase-key.json')
 
 firebase_admin.initialize_app(cred, {
@@ -37,6 +35,9 @@ firebase_admin.initialize_app(cred, {
 
 def verify_address(address):
     """Vérifie l'adresse avec Nominatim et retourne les coordonnées"""
+    if not address or address == '':
+        return {'valid': False, 'error': 'Pas d\'adresse'}
+    
     try:
         url = "https://nominatim.openstreetmap.org/search"
         params = {
@@ -86,23 +87,6 @@ def calculate_delivery_fee(distance_km, order_total):
     else:
         return 5.00
 
-def extract_delivery_info(analysis):
-    """Extrait l'adresse de livraison depuis l'analyse"""
-    # Cherche dans les notes
-    notes = analysis.get('notes', '').lower()
-    
-    # Patterns simples pour détecter une adresse
-    if 'livraison' in notes or 'livrer' in notes or 'adresse' in notes:
-        # Essaie d'extraire l'adresse des notes
-        # Format type: "Livraison au 15 rue de la République"
-        return notes.replace('livraison', '').replace('livrer', '').replace('au', '').strip()
-    
-    # Si type_service indique livraison
-    if analysis.get('type_service', '') == 'Livraison':
-        return notes  # Retourne les notes complètes
-    
-    return ''
-
 @app.route('/')
 def index():
     """Serve l'interface web"""
@@ -113,20 +97,18 @@ def retell_webhook():
     """Webhook pour recevoir les appels de Retell AI"""
     try:
         data = request.json
-        print(f"Webhook Retell reçu: {json.dumps(data, indent=2)}")
+        print(f"📞 Webhook Retell reçu")
         
         # Extraire les données de l'appel
         call_data = data.get('call', {})
         call_id = call_data.get('call_id')
         transcript = call_data.get('transcript', '')
-        
-        # Extraire le numéro de téléphone de l'appelant
         from_number = call_data.get('from_number', 'Non fourni')
         
         if not transcript:
             return jsonify({
                 'status': 'error',
-                'message': 'Pas de transcription disponible'
+                'message': 'Pas de transcription'
             }), 400
         
         # Vérifier les doublons
@@ -134,48 +116,43 @@ def retell_webhook():
         existing_orders = ref.order_by_child('call_id').equal_to(call_id).get()
         
         if existing_orders:
-            print(f"Commande {call_id} déjà traitée")
-            return jsonify({
-                'status': 'duplicate',
-                'call_id': call_id
-            }), 200
+            print(f"⚠️ Commande {call_id} déjà traitée")
+            return jsonify({'status': 'duplicate', 'call_id': call_id}), 200
         
-        # Analyser la commande avec la fonction existante
+        # Analyser la commande
+        print(f"🤖 Analyse de la commande...")
         analysis = analyser_commande(transcript)
         
         if not analysis:
-            return jsonify({
-                'status': 'error',
-                'message': 'Impossible d\'analyser la commande'
-            }), 500
+            return jsonify({'status': 'error', 'message': 'Analyse impossible'}), 500
         
-        # Extraire l'adresse de livraison
-        delivery_address = extract_delivery_info(analysis)
+        print(f"✅ Analyse OK: {analysis.get('articles', 'N/A')}")
+        
+        # Traiter l'adresse de livraison
+        delivery_address = analysis.get('adresse_livraison', '')
         address_info = {'valid': False}
         distance_km = 0
         delivery_fee = 0
         
-        if delivery_address:
-            # Vérifier l'adresse
+        if delivery_address and delivery_address != '':
+            print(f"📍 Vérification adresse: {delivery_address}")
             address_info = verify_address(delivery_address)
             
             if address_info['valid']:
-                # Calculer la distance
                 distance_km = calculate_distance(RESTAURANT_COORDS, address_info['coordinates'])
+                print(f"🗺️ Distance: {distance_km} km")
                 
-                # Calculer les frais de livraison (gratuit si > 20€)
                 subtotal = analysis.get('prix_total', 0)
                 delivery_fee = calculate_delivery_fee(distance_km, subtotal)
+                print(f"💰 Frais livraison: {delivery_fee}€ (sous-total: {subtotal}€)")
         
-        # Calculer le total final
+        # Calculer le total
         subtotal = analysis.get('prix_total', 0)
         total = subtotal + delivery_fee
         
-        # Convertir les articles en format liste
-        articles_str = analysis.get('articles', 'Non spécifié')
+        # Préparer les items
         items = []
-        
-        if 'articles_detailles' in analysis:
+        if 'articles_detailles' in analysis and analysis['articles_detailles']:
             items = [
                 {
                     'name': art['nom'],
@@ -186,9 +163,8 @@ def retell_webhook():
                 for art in analysis['articles_detailles']
             ]
         else:
-            # Fallback: créer un item simple
             items = [{
-                'name': articles_str,
+                'name': analysis.get('articles', 'Non spécifié'),
                 'quantity': 1,
                 'unit_price': subtotal,
                 'total_price': subtotal
@@ -218,7 +194,7 @@ def retell_webhook():
         # Sauvegarder dans Firebase
         new_order_ref = ref.push(order)
         
-        print(f"✅ Commande {call_id} créée: {new_order_ref.key}")
+        print(f"✅ Commande {call_id} sauvegardée")
         print(f"   📞 Tel: {from_number}")
         print(f"   📍 Distance: {distance_km}km")
         print(f"   💰 Total: {total}€ (Livraison: {delivery_fee}€)")
@@ -228,18 +204,14 @@ def retell_webhook():
             'order_id': new_order_ref.key,
             'call_id': call_id,
             'total': total,
-            'delivery_fee': delivery_fee,
-            'delivery_fee_waived': delivery_fee == 0 and subtotal > 20
+            'delivery_fee': delivery_fee
         }), 200
         
     except Exception as e:
-        print(f"❌ Erreur webhook: {str(e)}")
+        print(f"❌ ERREUR webhook: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -251,4 +223,5 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Démarrage serveur sur port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)

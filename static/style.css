@@ -368,3 +368,25 @@ header h1 {
     font-size: 1.2rem;
     opacity: 0.8;
 }
+
+/* ===============================================
+   CORRECTION : Masquer les statistiques
+   =============================================== */
+#stats,
+.stats,
+.stat-card {
+    display: none !important;
+}
+
+/* ===============================================
+   CORRECTION : Désactiver transitions et 
+   animations pour éviter le clignotement
+   =============================================== */
+.order-card {
+    animation: none !important;
+    transition: none !important;
+}
+
+.orders-grid {
+    transition: none !important;
+}

@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, db
@@ -261,8 +260,16 @@ def calculate_delivery_fee(distance_km, order_total):
 
 @app.route('/')
 def index():
-    """Serve l'interface web"""
-    return INDEX_HTML
+    """Serve l'interface web avec URL Firebase dynamique"""
+    # Utiliser l'URL Firebase ou une valeur par défaut
+    firebase_url = FIREBASE_URL or 'https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app'
+    
+    # Injecter l'URL Firebase réelle dans le HTML
+    html = INDEX_HTML.replace(
+        'https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app',
+        firebase_url
+    )
+    return html
 
 @app.route('/webhook/retell', methods=['POST'])
 def retell_webhook():

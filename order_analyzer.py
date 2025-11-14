@@ -1,11 +1,11 @@
 """
-Analyseur intelligent de commandes avec OpenAI
-Compatible avec le nouveau système de livraison
+Analyseur intelligent de commandes avec OpenAI - VERSION CORRIGÉE
 """
 
 from openai import OpenAI
 import json
 import os
+import re
 
 # Menu pour le contexte de l'IA
 MENU_CONTEXT = """
@@ -59,24 +59,13 @@ FAMILY BOX:
 - Menu Family (34,90€)
 
 MENU ENFANT (5,90€): Burger Junior ou 5 Nuggets ou 1 Wrap + frites + jus + compote ou Kinder
-
-IMPORTANT: 
-- "Menu" = article + frites + boisson
-- "Seul" = juste l'article
 """
 
 def analyser_commande_avec_openai(transcript):
     """
     Analyse la transcription avec OpenAI GPT-4o
-    
-    Args:
-        transcript (str): Transcription de l'appel
-    
-    Returns:
-        dict: Analyse de la commande avec adresse de livraison
     """
     
-    # Initialise le client OpenAI
     try:
         api_key = os.environ.get('OPENAI_API_KEY')
         if not api_key:
@@ -90,43 +79,52 @@ def analyser_commande_avec_openai(transcript):
     
     prompt = f"""Tu es un système d'analyse de commandes pour le restaurant Chicken Hot Dreux.
 
-TRANSCRIPTION DE L'APPEL CLIENT :
+TRANSCRIPTION DE L'APPEL :
 {transcript}
 
-MENU DISPONIBLE :
+MENU :
 {MENU_CONTEXT}
 
-TÂCHE : Analyse cette transcription et extrais TOUTES les informations de commande.
+TÂCHE : Extrais TOUTES les informations de commande.
 
-Réponds UNIQUEMENT avec un JSON strict (pas de markdown, pas de texte avant/après) :
+Réponds UNIQUEMENT en JSON (sans markdown, sans texte avant/après) :
 
 {{
   "type_appel": "commande" ou "renseignement",
-  "type_service": "Sur place" ou "À emporter" ou "Livraison" ou "Non spécifié",
+  "type_service": "Sur place" ou "À emporter" ou "Livraison",
   "articles": [
-    {{"nom": "Nom exact", "prix": 0.00, "quantite": 1}}
+    {{"nom": "Nom exact du menu", "prix": 8.90, "quantite": 2}}
   ],
-  "adresse_livraison": "Adresse complète si livraison (rue, numéro, ville)",
-  "prix_total": 0.00,
-  "notes": "Précisions éventuelles (épicé, nature, etc.)"
+  "adresse_livraison": "Adresse complète avec numéro de rue, nom de rue et ville",
+  "prix_total": 17.80,
+  "notes": ""
 }}
 
-RÈGLES IMPORTANTES :
-1. Si le client demande juste des informations/horaires/question → type_appel = "renseignement"
-2. Si le client commande de la nourriture → type_appel = "commande"
-3. Détecte si c'est "Menu" (avec frites+boisson) ou "Seul" (juste le sandwich)
-4. Si le client mentionne une adresse → type_service = "Livraison" et extrais l'adresse complète dans adresse_livraison
-5. Si "sur place" mentionné → type_service = "Sur place"
-6. Si "emporter" ou "à emporter" → type_service = "À emporter"
-7. Détecte TOUTES les quantités mentionnées
-8. Si le client se corrige, prends SEULEMENT la dernière version
-9. Pour les extras (tenders, wings, pilons), détecte bien la quantité exacte
-10. Calcule le prix_total en additionnant tous les articles × quantités
+RÈGLES CRITIQUES :
+1. Pour "type_service" :
+   - Si adresse mentionnée = "Livraison"
+   - Si "sur place" = "Sur place"
+   - Si "emporter" ou "à emporter" = "À emporter"
+
+2. Pour "adresse_livraison" (TRÈS IMPORTANT) :
+   - TOUJOURS extraire l'adresse COMPLÈTE si livraison
+   - Format : "numéro rue, ville"
+   - Exemple : "15 rue de la République, Dreux"
+   - Si pas de livraison : mettre ""
+
+3. Pour "articles" :
+   - Par défaut les articles sont en "Menu" (avec frites+boisson)
+   - Si client dit "seul" ou "sans menu" = prix seul
+   - Chaque article doit avoir : nom, prix, quantite
+   - Pour plusieurs articles identiques, mettre quantite > 1
+
+4. "prix_total" = somme de tous les (prix × quantite)
 
 EXEMPLES :
-- "Un curry" → Menu Curry (8,90€)
-- "Deux curry pour livrer au 15 rue de la République à Dreux" → 2× Menu Curry (17,80€), Livraison, adresse: "15 rue de la République, Dreux"
-- "Un curry et 6 wings" → Menu Curry (8,90€) + 6 Wings (4,90€) = 13,80€
+- "Un curry" → Menu Curry (8.90€)
+- "Deux curry" → 2× Menu Curry (17.80€)
+- "Un curry et 6 wings" → Menu Curry (8.90€) + Wings x6 (4.90€) = 13.80€
+- "Livraison au 15 rue de la Gare à Dreux" → type_service: "Livraison", adresse_livraison: "15 rue de la Gare, Dreux"
 """
 
     try:
@@ -135,7 +133,7 @@ EXEMPLES :
             messages=[
                 {
                     "role": "system",
-                    "content": "Tu es un expert en extraction de données de commandes de restaurant. Tu réponds UNIQUEMENT en JSON strict, sans texte supplémentaire."
+                    "content": "Tu es un expert en extraction de données de commandes. Tu réponds UNIQUEMENT en JSON strict."
                 },
                 {
                     "role": "user",
@@ -143,87 +141,157 @@ EXEMPLES :
                 }
             ],
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=800,
             response_format={"type": "json_object"}
         )
         
         result_text = response.choices[0].message.content.strip()
+        print(f"🤖 Réponse OpenAI brute : {result_text[:200]}...")
+        
         result = json.loads(result_text)
         
-        # Validation
-        if 'type_appel' not in result:
-            result['type_appel'] = 'commande'
+        # Validation et nettoyage
+        type_appel = result.get('type_appel', 'commande')
+        type_service = result.get('type_service', 'Non spécifié')
+        articles = result.get('articles', [])
+        adresse = result.get('adresse_livraison', '').strip()
+        prix_total = float(result.get('prix_total', 0))
+        notes = result.get('notes', '')
         
-        if 'type_service' not in result:
-            result['type_service'] = 'Non spécifié'
+        # Si pas d'articles, créer un article par défaut
+        if not articles or len(articles) == 0:
+            print("⚠️ Aucun article détecté, création article par défaut")
+            articles = [{
+                'nom': 'Article non spécifié',
+                'prix': 0,
+                'quantite': 1
+            }]
         
-        if 'articles' not in result or not result['articles']:
-            result['articles'] = []
+        # Nettoyer les articles (gérer les erreurs de format)
+        articles_propres = []
+        for art in articles:
+            try:
+                articles_propres.append({
+                    'nom': str(art.get('nom', 'Article')),
+                    'prix': float(art.get('prix', 0)),
+                    'quantite': int(art.get('quantite', 1))
+                })
+            except Exception as e:
+                print(f"⚠️ Erreur format article : {e}")
+                articles_propres.append({
+                    'nom': 'Article',
+                    'prix': 0,
+                    'quantite': 1
+                })
         
-        if 'prix_total' not in result:
-            result['prix_total'] = 0
+        # Nettoyer l'adresse
+        if type_service == 'Livraison' and not adresse:
+            print("⚠️ Livraison détectée mais pas d'adresse, tentative extraction manuelle")
+            adresse = extraire_adresse_manuel(transcript)
         
-        if 'adresse_livraison' not in result:
-            result['adresse_livraison'] = ''
-        
-        # Formatte les articles
+        # Formater la liste des articles pour affichage
         articles_str = ', '.join([
             f"{art['quantite']}× {art['nom']}" if art['quantite'] > 1 else art['nom']
-            for art in result['articles']
+            for art in articles_propres
         ])
         
+        print(f"✅ Analyse réussie : {len(articles_propres)} article(s), {type_service}")
+        print(f"   Articles : {articles_str}")
+        print(f"   Adresse : {adresse if adresse else 'Aucune'}")
+        
         return {
-            'type_appel': result['type_appel'],
-            'type_service': result['type_service'],
+            'type_appel': type_appel,
+            'type_service': type_service,
             'articles': articles_str if articles_str else 'Non spécifié',
-            'adresse_livraison': result.get('adresse_livraison', ''),
-            'prix_total': round(float(result['prix_total']), 2),
-            'nombre_articles': len(result['articles']),
-            'notes': result.get('notes', ''),
-            'articles_detailles': result['articles']
+            'adresse_livraison': adresse,
+            'prix_total': round(prix_total, 2),
+            'nombre_articles': len(articles_propres),
+            'notes': notes,
+            'articles_detailles': articles_propres
         }
         
-    except Exception as e:
-        print(f"❌ Erreur OpenAI: {e}")
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur parsing JSON : {e}")
+        print(f"   Réponse brute : {result_text}")
         return analyser_commande_simple(transcript)
+    except Exception as e:
+        print(f"❌ Erreur OpenAI : {e}")
+        import traceback
+        traceback.print_exc()
+        return analyser_commande_simple(transcript)
+
+
+def extraire_adresse_manuel(transcript):
+    """Extraction manuelle d'adresse si OpenAI échoue"""
+    transcript_lower = transcript.lower()
+    
+    # Patterns d'adresse
+    patterns = [
+        r'(\d+\s+(?:rue|avenue|boulevard|av|bd|place)\s+[^,\.]+(?:,\s*\w+)?)',
+        r'(au\s+\d+\s+[^,\.]+(?:,\s*\w+)?)',
+        r'(\d+\s+[^,\.]+(?:dreux|vernouillet|cherisy))',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, transcript_lower, re.IGNORECASE)
+        if match:
+            adresse = match.group(1).strip()
+            # Ajouter Dreux si pas de ville
+            if 'dreux' not in adresse.lower() and 'vernouillet' not in adresse.lower():
+                adresse += ', Dreux'
+            return adresse
+    
+    return ''
 
 
 def analyser_commande_simple(transcript):
     """Fallback simple si OpenAI échoue"""
+    print("⚠️ Mode fallback activé")
+    
     transcript_lower = transcript.lower()
     
+    # Type d'appel
     mots_commande = ['prendre', 'commander', 'commande', 'voudrai', 'menu', 'curry', 'burger']
     type_appel = 'commande' if any(mot in transcript_lower for mot in mots_commande) else 'renseignement'
     
+    # Type de service
     type_service = 'Non spécifié'
     adresse_livraison = ''
     
-    if 'livraison' in transcript_lower or 'livrer' in transcript_lower:
+    if 'livraison' in transcript_lower or 'livrer' in transcript_lower or 'rue' in transcript_lower:
         type_service = 'Livraison'
-        # Essai simple d'extraction d'adresse
-        if 'rue' in transcript_lower or 'avenue' in transcript_lower:
-            adresse_livraison = transcript  # Garde toute la transcription
+        adresse_livraison = extraire_adresse_manuel(transcript)
     elif 'sur place' in transcript_lower:
         type_service = 'Sur place'
     elif 'emporter' in transcript_lower or 'à emporter' in transcript_lower:
         type_service = 'À emporter'
     
+    # Articles basiques
     articles = []
     prix_total = 0
     
+    # Détection simple des articles populaires
+    items_detectes = []
     if 'curry' in transcript_lower:
-        articles.append({'nom': 'Menu Curry', 'prix': 8.90, 'quantite': 1})
-        prix_total += 8.90
-    
+        items_detectes.append(('Menu Curry', 8.90))
     if 'mixte' in transcript_lower:
-        articles.append({'nom': 'Menu Mixte', 'prix': 9.50, 'quantite': 1})
-        prix_total += 9.50
-    
+        items_detectes.append(('Menu Mixte', 9.50))
     if 'classic' in transcript_lower:
-        articles.append({'nom': 'Menu Classic', 'prix': 8.90, 'quantite': 1})
-        prix_total += 8.90
+        items_detectes.append(('Menu Classic', 8.90))
+    if 'wings' in transcript_lower or 'wing' in transcript_lower:
+        items_detectes.append(('Wings x6', 4.90))
+    if 'tenders' in transcript_lower or 'tender' in transcript_lower:
+        items_detectes.append(('Tenders x7', 6.90))
     
-    articles_str = ', '.join([art['nom'] for art in articles]) if articles else 'Non spécifié'
+    # Si aucun article détecté
+    if not items_detectes:
+        items_detectes.append(('Article non spécifié', 0))
+    
+    for nom, prix in items_detectes:
+        articles.append({'nom': nom, 'prix': prix, 'quantite': 1})
+        prix_total += prix
+    
+    articles_str = ', '.join([art['nom'] for art in articles])
     
     return {
         'type_appel': type_appel,
@@ -238,13 +306,21 @@ def analyser_commande_simple(transcript):
 
 
 def analyser_commande(transcript):
-    """
-    Point d'entrée principal pour l'analyse de commande
+    """Point d'entrée principal"""
+    print(f"\n{'='*60}")
+    print(f"📝 ANALYSE DE COMMANDE")
+    print(f"{'='*60}")
+    print(f"Transcription : {transcript[:100]}...")
     
-    Args:
-        transcript (str): Transcription de l'appel téléphonique
-        
-    Returns:
-        dict: Analyse complète de la commande
-    """
-    return analyser_commande_avec_openai(transcript)
+    result = analyser_commande_avec_openai(transcript)
+    
+    print(f"\n{'='*60}")
+    print(f"📊 RÉSULTAT ANALYSE")
+    print(f"{'='*60}")
+    print(f"Type : {result['type_service']}")
+    print(f"Articles : {result['articles']}")
+    print(f"Prix : {result['prix_total']}€")
+    print(f"Adresse : {result['adresse_livraison']}")
+    print(f"{'='*60}\n")
+    
+    return result

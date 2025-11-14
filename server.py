@@ -46,15 +46,6 @@ INDEX_HTML = '''<!DOCTYPE html>
         .badge-livraison { background: linear-gradient(135deg, #ff6b6b, #ee5a6f); color: white; }
         .badge-emporter { background: linear-gradient(135deg, #ffa500, #ff8c00); color: white; }
         .badge-surplace { background: linear-gradient(135deg, #51cf66, #37b24d); color: white; }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }
-        .stat-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
-        .stat-number { display: block; font-size: 2.5rem; font-weight: bold; color: #667eea; margin-bottom: 10px; }
-        .stat-label { display: block; color: #666; font-size: 0.9rem; }
         .orders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 25px; }
         .order-card {
             background: white;
@@ -63,7 +54,6 @@ INDEX_HTML = '''<!DOCTYPE html>
             box-shadow: 0 8px 16px rgba(0,0,0,0.15);
             border-left: 8px solid;
             transition: transform 0.3s;
-            animation: slideIn 0.5s ease;
         }
         .order-card:hover { transform: translateY(-5px); }
         .order-card[data-type="Livraison"] { border-left-color: #ff6b6b; background: linear-gradient(to right, #fff5f5 0%, white 10%); }
@@ -98,7 +88,6 @@ INDEX_HTML = '''<!DOCTYPE html>
         .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: bold; background: #fff3cd; color: #856404; }
         .empty-state { text-align: center; padding: 60px 20px; color: white; }
         .empty-state h2 { font-size: 2rem; margin-bottom: 10px; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) { .orders-grid { grid-template-columns: 1fr; } header h1 { font-size: 2rem; } }
     </style>
 </head>
@@ -113,48 +102,42 @@ INDEX_HTML = '''<!DOCTYPE html>
                 <span class="badge badge-surplace">Sur place</span>
             </div>
         </header>
-        <div id="stats" class="stats">
-            <div class="stat-card"><span class="stat-number" id="total-orders">0</span><span class="stat-label">Commandes totales</span></div>
-            <div class="stat-card"><span class="stat-number" id="pending-orders">0</span><span class="stat-label">En attente</span></div>
-            <div class="stat-card"><span class="stat-number" id="total-revenue">0€</span><span class="stat-label">Chiffre d'affaires</span></div>
-        </div>
         <div id="orders-container" class="orders-grid"></div>
     </div>
     <script>
         const FIREBASE_URL = 'https://chicken-hot-dreux-default-rtdb.europe-west1.firebasedatabase.app';
         let orders = {};
+        let lastOrdersJSON = '';
+        
         function formatDateTime(d) {
             const date = new Date(d);
             return date.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
         }
+        
         function getTypeClass(t) {
             if (t === 'Livraison') return 'type-livraison';
             if (t === 'À emporter') return 'type-emporter';
             if (t === 'Sur place') return 'type-surplace';
             return 'type-default';
         }
+        
         function createOrderHTML(id, o) {
             const t = o.type_service || 'Non spécifié';
             const isDel = t === 'Livraison';
             let contact = '';
             if (isDel && (o.phone_number || o.delivery_address)) {
                 contact = '<div class="contact-info">';
-                if (o.phone_number && o.phone_number !== 'Non fourni') contact += `<p><strong>📞 Téléphone:</strong> <span class="phone-number">${o.phone_number}</span></p>`;
-                if (o.formatted_address || o.delivery_address) contact += `<p><strong>📍 Adresse:</strong> <span class="delivery-address">${o.formatted_address || o.delivery_address}</span></p>`;
-                if (o.distance_km > 0) contact += `<p>Distance: ${o.distance_km} km</p>`;
+                if (o.phone_number && o.phone_number !== 'Non fourni') contact += \`<p><strong>📞 Téléphone:</strong> <span class="phone-number">\${o.phone_number}</span></p>\`;
+                if (o.formatted_address || o.delivery_address) contact += \`<p><strong>📍 Adresse:</strong> <span class="delivery-address">\${o.formatted_address || o.delivery_address}</span></p>\`;
+                if (o.distance_km > 0) contact += \`<p>Distance: \${o.distance_km} km</p>\`;
                 contact += '</div>';
             }
-            const items = o.items.map(i => `<div class="item"><span class="item-name"><span class="item-quantity">${i.quantity}×</span>${i.name}</span><span class="item-price">${i.total_price.toFixed(2)}€</span></div>`).join('');
+            const items = o.items.map(i => \`<div class="item"><span class="item-name"><span class="item-quantity">\${i.quantity}×</span>\${i.name}</span><span class="item-price">\${i.total_price.toFixed(2)}€</span></div>\`).join('');
             let delFee = '';
-            if (isDel && o.delivery_fee > 0) delFee = `<div class="price-row"><span>Frais de livraison</span><span>+${o.delivery_fee.toFixed(2)}€</span></div>`;
-            return `<div class="order-card" data-type="${t}"><div class="order-header"><span class="order-time">${formatDateTime(o.timestamp)}</span><span class="status-badge">Nouvelle</span></div><div class="order-type ${getTypeClass(t)}">${t}</div>${contact}<div class="order-items">${items}</div><div class="order-pricing"><div class="price-row"><span>Sous-total</span><span>${o.subtotal.toFixed(2)}€</span></div>${delFee}<div class="price-row total"><span>TOTAL</span><span>${o.total.toFixed(2)}€</span></div></div></div>`;
+            if (isDel && o.delivery_fee > 0) delFee = \`<div class="price-row"><span>Frais de livraison</span><span>+\${o.delivery_fee.toFixed(2)}€</span></div>\`;
+            return \`<div class="order-card" data-type="\${t}" data-id="\${id}"><div class="order-header"><span class="order-time">\${formatDateTime(o.timestamp)}</span><span class="status-badge">Nouvelle</span></div><div class="order-type \${getTypeClass(t)}">\${t}</div>\${contact}<div class="order-items">\${items}</div><div class="order-pricing"><div class="price-row"><span>Sous-total</span><span>\${o.subtotal.toFixed(2)}€</span></div>\${delFee}<div class="price-row total"><span>TOTAL</span><span>\${o.total.toFixed(2)}€</span></div></div></div>\`;
         }
-        function updateStats() {
-            const ol = Object.values(orders);
-            document.getElementById('total-orders').textContent = ol.length;
-            document.getElementById('pending-orders').textContent = ol.filter(o => o.status === 'pending').length;
-            document.getElementById('total-revenue').textContent = ol.reduce((s, o) => s + (o.total || 0), 0).toFixed(2) + '€';
-        }
+        
         function displayOrders() {
             const c = document.getElementById('orders-container');
             if (Object.keys(orders).length === 0) {
@@ -164,14 +147,40 @@ INDEX_HTML = '''<!DOCTYPE html>
             const sorted = Object.entries(orders).sort((a, b) => new Date(b[1].timestamp) - new Date(a[1].timestamp));
             c.innerHTML = sorted.map(([id, o]) => createOrderHTML(id, o)).join('');
         }
+        
         function listenToOrders() {
-            const ref = `${FIREBASE_URL}/orders.json`;
-            fetch(ref).then(r => r.json()).then(d => { if (d) { orders = d; displayOrders(); updateStats(); } }).catch(e => console.error(e));
+            const ref = \`\${FIREBASE_URL}/orders.json\`;
+            
+            // Premier chargement
+            fetch(ref).then(r => r.json()).then(d => { 
+                if (d) { 
+                    orders = d; 
+                    lastOrdersJSON = JSON.stringify(d);
+                    displayOrders(); 
+                } 
+            }).catch(e => console.error(e));
+            
+            // Vérification toutes les 3 secondes SEULEMENT si changement
             setInterval(() => {
-                fetch(ref).then(r => r.json()).then(d => { if (d) { orders = d; displayOrders(); updateStats(); } }).catch(e => console.error(e));
-            }, 2000);
+                fetch(ref).then(r => r.json()).then(d => { 
+                    if (d) {
+                        const newJSON = JSON.stringify(d);
+                        // Ne recharge QUE si les données ont changé
+                        if (newJSON !== lastOrdersJSON) {
+                            orders = d;
+                            lastOrdersJSON = newJSON;
+                            displayOrders();
+                            console.log('🔄 Nouvelles commandes détectées');
+                        }
+                    }
+                }).catch(e => console.error(e));
+            }, 3000);
         }
-        document.addEventListener('DOMContentLoaded', () => { console.log('🍗 Chargé'); listenToOrders(); });
+        
+        document.addEventListener('DOMContentLoaded', () => { 
+            console.log('🍗 Chicken Hot Dreux chargé'); 
+            listenToOrders(); 
+        });
     </script>
 </body>
 </html>
